@@ -1,0 +1,29 @@
+# Game data and dumps: never committed, never shared
+orig/
+*.iso
+*.gcm
+*.rvz
+*.wia
+*.wbfs
+*.ciso
+*.gcz
+*.tgc
+*.dol
+*.elf
+*.nro
+*.nca
+*.nsp
+
+# Build output
+build/
+cmake-build-*/
+out/
+
+# Reference clones (local study only)
+research/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

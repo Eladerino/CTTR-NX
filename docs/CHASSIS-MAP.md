@@ -4,6 +4,17 @@ Written Oct 29, 2026 from direct inspection of both clones in research/:
 new-coke/strikers (port) and bluisblu/cttr (decomp). File and line counts
 below were measured in those clones, not copied from project pages.
 
+## Update, Oct 30, 2026
+
+This map was written for the decomp-based route, which was set aside the
+same day it was written. The active route is static recompilation
+(DolRecomp + ModernGekko), with the Switch phase scoped in
+docs/HORIZON-SCOPE.md. The Strikers material below stays useful as
+background for that phase's renderer decision (the Mesa NVK build recipe,
+and the NVK builder repo produced during the Strikers spike), but the
+game-layer and platform-layer mapping here assumed decompiled source and
+no longer describes the plan.
+
 ## The Strikers chassis, layer by layer
 
 1. Game layer. The decomp source, reorganised under src/ (Game, NL engine,
@@ -86,3 +97,24 @@ below were measured in those clones, not copied from project pages.
 - The decomp's own Phase 0 build (configure.py + ninja on the LOQ, native
   Windows tooling per its README) needs only Python and ninja, and proves
   the disc and toolchain before any port code exists.
+
+## Spike result (Oct 29, 2026, LOQ)
+
+The Strikers Switch build was spiked on the LOQ the same day:
+
+- Docker Desktop installed; the pinned devkitPro image
+  (devkitpro/devkita64@sha256:1fc388c3...) pulls and runs on x86_64.
+- Inside the container: apt build deps installed, the Dawn fork fetched
+  (tools/fetch-switch-deps.sh), and configure ran with working devkitA64
+  compilers (GNU 15.2.0) until it stopped at the one predicted wall:
+  "extern/nvk-switch/lib/libvulkan.a is missing". The game-compile half
+  of the chassis is therefore proven on an x86_64 Windows host.
+- The remaining piece is only the NVK static library, whose build script
+  checks the Docker host architecture and refuses non-arm64, because
+  mesa-switch compiles NVK's Rust code for the host with no target flag.
+  The official Switch release offers no shortcut: its zip is the NRO
+  plus licences, with the driver statically linked inside.
+- Plan: build NVK once on a GitHub Actions arm64 runner
+  (ubuntu-24.04-arm) from a small builder repo, download the
+  extern/nvk-switch tree as an artifact, drop it into the LOQ clone,
+  then re-run configure and tools/switch/rebuild.sh. Not yet started.

@@ -1,0 +1,44 @@
+schema_version: 1
+workspace_root: ../..
+
+# Crash Tag Team Racing, North America (G9RE7D rev 0), GameCube.
+# Spike config: permissive settings (per projects/examples/generic-dol.yml)
+# so the first pass enumerates gaps instead of stopping at them.
+project:
+  id: cttr-g9re7d
+  display_name: Crash Tag Team Racing (USA)
+  game_id: G9RE7D
+  region: E
+
+memory:
+  base: 0x80000000
+  size: 0x01800000
+  # Read from __init_registers (0x8000539C) in the verified main.dol
+  # on Nov 2, 2026 with tools/read-sda.py; instruction-verified:
+  # lis/ori pairs at 0x80005418 (r2) and 0x80005420 (r13).
+  sda_base: 0x804AB980   # _SDA_BASE_  (r13)
+  sda2_base: 0x804B6F80  # _SDA2_BASE_ (r2)
+
+inputs:
+  # Set RECOMP_CTTR_DOL to the verified main.dol from Phase 0
+  # (C:\Games\CTTR\cttr\build\G9RE7D\main.dol; from WSL:
+  # /mnt/c/Games/CTTR/cttr/build/G9RE7D/main.dol).
+  dol:
+    path: "%RECOMP_CTTR_DOL%"
+
+translation:
+  entry_points:
+    - 0x80005240
+  allow_unsupported_instructions: true
+  function_map:
+    path: projects/cttr/MAP.txt
+
+runtime:
+  native_abi_directories: []
+
+output:
+  root: build/cttr
+  functions: functions
+  runtime_config: RuntimeConfig.h
+  data_initializer: data_sections_init.cpp
+  base_manifest: base/base_manifest.json

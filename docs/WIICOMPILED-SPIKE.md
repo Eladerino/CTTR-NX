@@ -2689,3 +2689,195 @@ instrumentation -- log GOD/DVD file opens by name in the runtime's
 DVD HLE layer during init, and a frame-1 full dump of the handler
 object vs its frame-90 state. Tree remains SAFE (stub on) with the
 batch 97-99 detector dormant in gx_copy.cpp (self-caps at 40 samples).
+
+## BATCHES 100-101 (Nov 4 late): DVD GAP FOUND -- BUT THE FUNNEL IS NEVER REACHED; WORKERS WAIT ON A SEMAPHORE NOBODY SIGNALS
+
+Discovery: of CTTR's entire DVD surface, ONLY DVDInit (0x8034D974)
+was HLE-bound. DVDLowRead/DVDReadAsyncPrio/etc. run as translated
+guest SDK code, and the runtime has NO DI register emulation
+anywhere -- so a guest DVD read would wait forever for a DI
+interrupt. Batch 100 bound CTTR's DVDLowRead (0x8034C4F0) to a
+CTTR-safe copy of the SPM HLE read (same host-read + CopyToGuestAsDma
++ callback path, WITHOUT CompleteDvdCancelState, whose writes to
+NSMBW globals 0x8050B690/0x8056DCxx would land in live CTTR heap).
+Batch 101 traced it: ZERO calls in 45 s. The binding is correct and
+worth keeping (anything that ever reaches DVDLowRead now completes),
+but the game's read path never gets there. The apparent behavior
+change in runs 111/112 (CPU, "slow frame (logo)" lines) was a
+misread: the slow-frame spam is just the stage timer on the known
+~4.5 fps pace; frame counts were unchanged.
+
+The loader threads' shape (from generated code): entry trampoline
+fn_8024C55C calls the fn ptr at [desc+8]; the worker body fn_8023A1EC
+begins by calling fn_8024C93C, a tail-wrapper for OSWaitSemaphore
+(0x8034A1B4) -- the workers park on a GOD "work available" semaphore.
+Their processing calls no DVD SDK functions directly. The OS
+semaphore trio (OSInitSemaphore 0x8034A15C, OSWaitSemaphore
+0x8034A1B4, OSSignalSemaphore 0x8034A224) has NO HLE binding in the
+runtime's OS layer -- all translated.
+NEXT STEP when resumed: read fn_8023A1EC's wait call site (lines
+~40-70) to identify the work-semaphore address, then witness
+OSSignalSemaphore's generated body during boot: if that semaphore is
+never signaled, the poster (game-side load requester) is dead before
+posting; if it IS signaled and waits never return, the translated
+semaphore/scheduler integration is the bug. Tree state: stub ON,
+batch 100 binding live, batches 97-99 detector dormant. Stable
+(103 frames/30 s, console-112/113).
+
+## BATCH 102 (Nov 4 late): THE SEMAPHORE WORKS -- A HANDFUL OF BOOT JOBS RUN, THEN POSTING STOPS
+
+Worker body fn_8023A1EC loops on OSWaitSemaphore(sem at loaderObj+1612),
+then checks a flag byte at loaderObj+1608 and dequeues via fn_8023A9B8.
+Batch 102 witnessed OSSignalSemaphore (w40) / OSWaitSemaphore (w41)
+entries system-wide for a full run: 12 signals, 15 waits, ALL from the
+GOD semaphore helper pair -- wait wrapper fn_8024C93C, signal wrapper
+fn_8024C95C. Three loader objects (semaphores 0x80B95AF4, 0x80BA9254,
+0x80450450; a fourth semaphore at 0x80B95B18 = first loader +1636 is
+a second semaphore in the same object). Waits and signals interleave
+sanely: workers wake, loop, re-wait. The semaphore/scheduler layer is
+HEALTHY. A handful of jobs are posted and consumed during boot, then
+posting stops entirely -- the strap/title requests are never enqueued.
+NEXT STEP when resumed: find the callers of the post helper
+fn_8024C95C across the generated tree (the load-request API), and
+bracket the worker dequeue fn_8023A9B8 to identify what the ~12 boot
+jobs actually were (their item contents). Tree state unchanged and
+stable: drain stub ON, batch 100 DVDLowRead binding live (inert until
+reached), all witnesses dormant.
+
+## BATCH 103 (Nov 4 late): TWO BOOT JOBS, PURE IN-MEMORY STAGES, WAITING ON A FIELD THAT NEVER CHANGES
+
+Post-helper entries (w42) all come from fn_8023A700 (the GOD enqueue
+API, LR 0x8023A7C4) plus reposts signaled from fn_8023A9B8's area
+(LR 0x8023A9A8, to the second semaphore of loader object 1).
+Dequeued items (w43/w44): exactly TWO job objects ever circulate --
+0x80B921D0 and 0x80B920B8. Each carries a vtable that gets swapped as
+it advances (seen: 0x803E376C -> 0x803E3B3C, 0x803E3C3C), and the
+worker invokes item->vtable[5] then vtable[3] per handoff. The
+vtable[5] stage functions are all LEAF code with zero calls:
+fn_8024A3F0, fn_80248730 (stage logic), fn_80248B8C (a getter:
+return [[item+8]+12]). After ~10 handoffs both jobs stop being
+reposted. No stage issues a read; the jobs are waiting on a field in
+shared state that some other actor was supposed to update (the same
+flavor of stall as everything else in this campaign: an expected
+producer never produces). Callers of the post helper exist across
+the 0x802B9xxx/0x802BAxxx asset layer (fn_802BA070 x4, fn_802BA664
+x4, fn_802B9E7C x2) -- those are presumably the real load-request
+sites, never exercised for strap/title.
+NEXT STEP when resumed: read the two leaf stage functions
+fn_8024A3F0 / fn_80248730 fully -- the exact field(s) they poll or
+decrement are named in their bodies; then find who was supposed to
+write that field. Tree stable, stub on, all witnesses dormant.
+
+## BATCHES 104-105 (Nov 4 late): THE STALLED RESOURCE IS THE DISC IDENTITY OBJECT ("cnDVDDrive")
+
+Batch 104 dumped the two boot jobs and their shared resource:
+BOTH jobs point at ONE resource object X = 0x80B93A44. X contains
+the formatted identity string "game:[] company:[] disc:[0]
+version[0]" -- empty game (4 chars) and company (2 chars), disc 0,
+version 0. X+180 (the state word the workers poll via fn_80239908)
+= 1 (not ready); X+188 = back-pointer to loader object 1. On real
+hardware the identity fields come from the GameCube disc header /
+DiskID. Nothing in our runtime ever issues that read: DVDLowRead
+(batch 100 binding) has still never been called, the manager queue
+is empty, and batch 105 (drain un-stubbed again on top of the
+batch-95 r31 fix) changed nothing -- drain calls 1-9 returned, call
+10 hung inside the FA00 chain again (a separate drain-side hang;
+the manager queue is NOT the identity path).
+The identity format string ("\ncDVDDrive\ngame:[%.4s]
+company:[%.2s] disc:[%d] version[%d]\n") lives at VA 0x803E2654
+(DOL file off 0x3DF634, section 12); "cnDVDDrive" tag at
+0x803E2647. Guest code builds such addresses as base+offset
+(0x803E0000 + imm), so full-address greps miss references.
+fn_8023F914 (size 0xDC, spans 0x8023F914-0x8023F9F0) is a
+constructor in the cnDVDDrive cluster: writes table-derived
+pointers (base 0x803E2A54) into a new object at +0/+4/+12/+188/+192
+and calls fn_80241208. X's own first words (0x803E2838/284C/2858)
+come from a nearby table (0x803E2838).
+NEXT STEP when resumed: walk the cnDVDDrive constructor/init
+cluster (fn_8023F914, fn_80241208, neighbors 0x8023F12C-0x8023FB14)
+and find (a) X's constructor, (b) who was supposed to issue the
+disc-header/DiskID read and set X+180 to its ready value, (c) what
+guest call or HLE surface that read should have arrived through
+(DVDLowReadDiskID 0x8034C848 and DVDReadDiskID 0x8034F828 are the
+prime candidates -- neither has ever fired; their callers in the
+cluster will show why). Tree state: drain UN-STUBBED after batch
+105 (batch 90a) -- freeze-prone on drain call ~10; re-park with
+patch-god-drain-stub.py + emit + build before any long run.
+
+## BATCH 106 (Nov 4 late): DISKID PATH NEVER FIRES; X's CONSTRUCTOR ISN'T fn_8023F914
+
+Entry traces (run 119, verified current exe): DVDLowReadDiskID
+(w45) 0, DVDReadDiskID (w46) 0, fn_8034E788 (w47) 0, fn_80350778
+(w49) 0, fn_8023F914 (w50) 0. Only fn_8034EC18 (w48) fired, once.
+So the game never asks the SDK for the disc ID, and X is not built
+by the constructor I guessed. X's vtable group at 0x803E2838
+(DOL-verified triples {COL 0x804AAAD0, offset, fn}): primary
+methods fn_80237778, fn_8023779C (shared base), fn_8023F6F4;
+secondary fn_8023F67C; tertiary fn_8023F68C, fn_8023F684. Batch
+97-99's detector showed X's heap block (0x80B93A00) already static
+by frame 10: X is fully formed, state=1, before frame ~10 and
+never touched again. (Run-119 build printed a ninja subcommand
+failure AFTER the link; the exe is the batch-106 build -- proven
+by w48 existing at all, impossible under the previous caps bound.)
+
+## BATCHES 107-108 (Nov 4 late): ROOT CAUSE OF THE WHOLE STALL -- NO DI EMULATION UNDER THE TRANSLATED DVD STATE MACHINE
+
+Batch 108 traced the public DVD surface for a full boot:
+DVDReadAsyncPrio 0, DVDReadPrio 0, DVDReadAbsAsyncPrio 0, seeks 0,
+__DVDPushWaitingQueue exactly 1, stateReady exactly 1,
+stateCheckID 0. The single queued command in the entire boot is a
+DVD INQUIRY (push caller LR 0x8034FA44 inside DVDInquiryAsync,
+queue index 2) -- the cnDVDDrive's boot-time drive inquiry, i.e.
+the command whose completion was supposed to fill identity object
+X (0x80B93A44) and flip its state word at +180 from 1 to ready.
+stateReady dispatched once into stateBusy with the current-block
+SDA slot reading 0, and no DVDLow* issuer ever ran (DVDLowRead,
+DVDLowReadDiskID, DVDLowInquiry all zero for the whole campaign).
+CONCLUSION: CTTR uses the full translated GameCube DVD SDK state
+machine (stateReady/stateBusy/stateCheckID/cbForStateBusy + the
+waiting queues). That machine advances via DI (drive interface)
+register pokes and completion interrupts. The runtime emulates
+NEITHER (zero DI register handling anywhere in runtime/src or
+aurora). The inquiry therefore never issues and never completes;
+the drive identity never becomes ready; GOD's three loaders idle
+with only their two housekeeping jobs ping-ponging; no read
+command is ever even created; textures stay zero forever.
+FIX DIRECTION (next campaign step): bypass the state machine --
+HLE-bind the SDK command entry points to the runtime's existing
+file-backed DVD implementation (the SPM dvd.cpp HLE family):
+DVDInquiryAsync, DVDReadAsyncPrio, DVDReadPrio, DVDReadAbsAsyncPrio,
+DVDSeek*, DVDReadDiskID, plus whatever GOD calls directly. The
+batch-100 DVDLowRead_CTTR binding is the working template (it must
+stay for any state-machine stragglers). This is a runtime-code
+project in dvd.cpp + binding tables; coordinate with the rebrand
+pass currently editing runtime/src (branding only) so the builds
+do not interleave.
+
+
+## Rebrand batch (Nov 4, 2026, late)
+
+The runtime's product identity was rebranded from the Super Paper Mario
+product it was adapted from to Crash Tag Team Racing, port by Eladerino
+(script: tools/patch-cttr-rebrand.py, applied to the LOQ working tree;
+builds cttr-build-rebrand through cttr-build-rebrand5). Splash
+title/credit, settings bar title, product descriptor
+(runtime/src/product/base_product.cpp), app name, Discord presence,
+launcher setup text and disc validation (G9RE7D only; the SPM
+other-region restart branch in game_folder.cpp was removed, as this is
+a single-disc product), panic text, config help text, the generated
+Config.toml template, and the updater's relaunch target now name CTTR.
+The runtime/src edits are branding only, apart from that one branch
+removal and the G9RE7D string fixes in dvd.cpp (config help and the
+dvd_root error text). The user data directory moved from
+MarioWiiSaveData to CTTRSaveData; the old folder was copied across and
+the original kept. The exe icon is a neutral generated CTTR monogram
+(runtime/assets/icon/cttr.ico) instead of the NSMBW icon.
+Attribution correction: WiiCompiled is by patchzyy and contributors;
+JosiahG authored the NewSuperPaperBros product/launcher layer this
+tree adapts, and Aurora is by Luke Street. Verified against the built
+exe: zero occurrences of "Super Paper Mario", "New Super Paper Bros",
+"MarioWiiSaveData" or "R8PE01/R8PP01" (narrow and wide), and
+mkw_runtime_config_tests passes. Known remainder: the SPM debug
+tooling internals (SpmMapSweep, the "tippi" action key, debug
+identifiers in settings_overlay.cpp) are untouched. The working tree
+is free for the batch-100 DVD work.

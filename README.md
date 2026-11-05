@@ -70,7 +70,7 @@ decomp remains a reference and a background watch (docs/DECOMP-WATCH.md).
   (G9RE7D, Rev 0).
 - The recompilation tools and runtimes are third-party open source projects
   (DolRecomp and ModernGekko by ExpansionPak and contributors, building on
-  Dolphin; the WiiCompiled runtime by JosiahG and contributors); their
+  Dolphin; the WiiCompiled runtime by patchzyy and contributors); their
   licences travel with their code.
 - The upstream decompilation (bluisblu/cttr) is CC0-1.0 and is used here as
   reference only. Per that project's stated policy, nothing from this
@@ -84,8 +84,10 @@ decomp remains a reference and a background watch (docs/DECOMP-WATCH.md).
 
 - DolRecomp and ModernGekko: ExpansionPak and contributors, building on
   the Dolphin emulator (Dolphin Team).
-- WiiCompiled runtime and the Aurora graphics library: JosiahG and
-  contributors.
+- WiiCompiled (recompiler and runtime): patchzyy and contributors.
+- Aurora graphics library: Luke Street and contributors.
+- Product and launcher layer: adapted from JosiahG's NewSuperPaperBros,
+  his Super Paper Mario port built on WiiCompiled.
 - Matching decompilation reference: the bluisblu/cttr project (CC0-1.0).
 - Crash Tag Team Racing: Radical Entertainment. Crash Bandicoot is a
   trademark of Activision.

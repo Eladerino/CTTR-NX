@@ -9,25 +9,49 @@ the North American GameCube release (G9RE7D, Rev 0).
 
 ## Status
 
-Two routes exist, and both are documented in this repo.
+The project's one route is the WiiCompiled-to-Switch pipeline:
+statically recompile the game's own code with the WiiCompiled
+toolchain, prove the game out on the PC runtime, then carry that
+build to Switch through the Horizon phase.
 
-**PC playable (ModernGekko route).** The game translated with DolRecomp
-runs on a Dolphin-derived runtime: menus, cutscenes, saving, gamepad input,
-and races all work at the game's original unlocked frame rate. Performance
-in the opening areas is strong; performance in the hub and later areas is
-an open investigation (see docs/HANDOFF-ADDENDUM-2026-11-01.md).
+**Where the PC build stands.** The whole game binary translates
+cleanly (25,276 functions) and boots through system, disc, video and
+audio init. The boot loader stall is long solved: the game streams
+its archives, plays the attract movie start to finish, and loads the
+frontend, which renders. The campaign's two long-standing failure
+layers were root-caused in November 2026. A poisoned scheduler
+context word is healed at the selection gate (batch 282). The second
+layer was the attract movie's own frame copy: a shared GX
+descriptor's pixel pointer flips in place to 0x20 mid-run, and
+through the runtime's MEM1 window that destination lands on low
+memory, so the copy sprayed frame pixels over the OS block (batch
+310 corrects the destination at the point of use; the flip's writer
+is still unknown and now harmless). The batch-310 build passed two
+consecutive full soaks (30 minutes, then ~52 minutes) with the
+movie looping.
 
-**Boot campaign (WiiCompiled route).** The whole game binary translates
-cleanly (25,276 functions) and the runtime now boots the game on PC:
-system init, disc, video, and audio init all complete, and the game
-presents frames behind the runtime's startup cover. The current open
-problem is the game's internal file loader, which stalls in the boot
-window so level data never streams in. The full campaign log, batch by
-batch, is docs/WIICOMPILED-SPIKE.md.
+The current open problem is one step further in, and it is the
+active work. Steered past the attract loop with synthetic input,
+the game crashes on a frontend menu draw: Sprite objects in the
+frontend package's memory are overwritten in place by texture data
+during the frontend phase. The loader is proven innocent (batch 311
+witness: every load and resolve correct; the objects die
+afterwards). Next step is catching the overwriting writer with a
+flip-watch on the affected span, with a point-of-use guard in the
+frontend Text draw as the fallback. The full campaign log, batch by
+batch, is docs/WIICOMPILED-SPIKE.md; the corruption hunt is
+consolidated in docs/WRITER-HUNT.md, and the frontend crash record
+is docs/FRONTEND-CRASH-2026-11-09.md.
 
-There is no Switch build yet. The Horizon phase is scoped in
-docs/HORIZON-SCOPE.md: source audit, cross-compile probe, a null-backend
-boot on real hardware as the kill-gate, then the renderer decision.
+**The Switch phase** has not started: there is no Switch build yet.
+It is scoped in docs/HORIZON-SCOPE.md: source audit, cross-compile
+probe, a null-backend boot on real hardware as the kill-gate, then
+the renderer decision (Aurora's deko3d backend is the leading
+candidate, with two shipped GameCube ports as evidence).
+
+An earlier ModernGekko/DolRecomp PC route also reached playable; it
+is not the project's direction and is kept only as history
+(docs/HANDOFF-ADDENDUM-2026-11-01.md).
 
 An earlier plan to build on the community matching decompilation was set
 aside on Oct 29, 2026: at 6.85% matched it is years from port-ready. The
@@ -42,9 +66,20 @@ decomp remains a reference and a background watch (docs/DECOMP-WATCH.md).
 - `docs/CHASSIS-DEEP-DIVE-2026-11-02.md` Source-level comparison of the
   candidate runtimes (purpose-built AOT, ModernGekko, WiiCompiled).
 - `docs/WIICOMPILED-SPIKE.md` The WiiCompiled translation spike and the
-  ongoing boot campaign, batch by batch.
-- `docs/HANDOFF-ADDENDUM-2026-11-01.md` ModernGekko performance session:
-  measurements and the shutdown-counter findings.
+  ongoing campaign, batch by batch, through the November wedge hunt
+  and the frontend crash diagnosis.
+- `docs/WRITER-HUNT.md` The consolidated record of the corruption
+  hunt: the drip, the module-walk storm, the two wedge layers, and
+  the Bink frame copy named as the writer.
+- `docs/FRONTEND-CRASH-2026-11-09.md` The first input run's crash:
+  diagnosis, the batch 311 loader witness, and the dead-Sprite
+  census.
+- `docs/UPDATER-PREP-2026-11-05.md` CTTR-side prep for the shared
+  cross-port self-updater: version source, menu placement, release
+  assets, and the file set an update may touch.
+- `docs/HANDOFF-ADDENDUM-2026-11-01.md` Historical: the earlier
+  ModernGekko route's performance session, measurements and the
+  shutdown-counter findings.
 - `docs/HORIZON-SCOPE.md` The Switch phase: milestones and kill-gates.
 - `docs/ICON-SPIKE.md` Plan for swapping the game's button prompt
   textures for Switch icons via texture replacement.

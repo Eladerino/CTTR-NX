@@ -74,6 +74,17 @@ Horizon build would use instead, and the size of the gap.
   (b) Vulkan over Mesa NVK (the nvk-switch-builder repo and its arm64 CI
   artifact pipeline already exist from the Strikers spike), or (c) another
   backend modelled on SunPad's Metal one if its seam turns out smallest.
+  Evidence for (a), added Nov 4, 2026 (Brandon's pointer, verified):
+  two GameCube games already ship on Switch drawn through Aurora with a
+  deko3d backend. centollOS/SwitchWaker (GameCube Wind Waker, from the
+  decompilation) replaced its OpenGL renderer with deko3d (roughly 90%
+  less CPU per frame; shaders prebuilt). The Dusklight Switch port
+  (Twilight Princess, Twilit Realm's decomp-based reimplementation;
+  Alek's Ultimate NX Edition) defaults to deko3d on Switch and its
+  renderer is Aurora's lib/deko, built from SwitchWaker's. So option (a)
+  has a named, reusable starting artifact (Aurora lib/deko, via
+  SwitchWaker) proven on the same graphics layer this runtime uses,
+  not just a design direction.
 - H4, platform layer and packaging. libnx input mapped through the pad
   config, audout audio backend, sdmc paths for the extracted game data and
   memory card file, title-takeover NRO packaging, own-dump data only.
@@ -112,3 +123,58 @@ https://github.com/digdat0/mkdd-nx/releases/tag/v1.8.2
 - Packaging shape also worth noting: release assets are the NRO, the
   MKDD-NX-Tools companion apps, and an update.txt consumed by an in-game
   updater.
+
+## Reference: digdat0's port guides (passed along by Brandon, Nov 4, 2026)
+
+Four guides from the mkdd-nx and Animal Crossing (gcNX) projects, read
+the night they were posted. They are the closest written playbooks to
+this phase: a GameCube recomp port that shipped on deko3d, and a
+GameCube decomp port's Switch platform lessons.
+
+- RECOMP_PORT_GUIDE.md (mkdd-nx):
+  https://github.com/digdat0/mkdd-nx/blob/main/docs/RECOMP_PORT_GUIDE.md
+- DEKO3D_MIGRATION.md (mkdd-nx):
+  https://github.com/digdat0/mkdd-nx/blob/main/docs/DEKO3D_MIGRATION.md
+- OPTIMIZATION.md (mkdd-nx):
+  https://github.com/digdat0/mkdd-nx/blob/main/docs/OPTIMIZATION.md
+- SWITCH_PORT_GUIDE.md (ACGC-Switch-Port):
+  https://github.com/digdat0/ACGC-Switch-Port/blob/main/docs/SWITCH_PORT_GUIDE.md
+
+What transfers to CTTR:
+
+- The GX decoder seam is the pivotal design decision: mkdd-nx decodes
+  GX on its own core into a backend-neutral Frame, which is what made
+  its GL-to-deko3d move a renderer-only swap. On the WiiCompiled side,
+  Aurora's lib/deko (via SwitchWaker, per the H3 evidence above) is
+  that same swap. Keep the seam clean whichever chassis wins.
+- Their deko3d migration was run as an experiment with a written exit
+  (at least 10% less GPU time at the same settings, no visual
+  regressions, or GL stays). A template for the H3 gate. Measured
+  result: about 42 to 59.9 fps handheld at 1.5x, render CPU cost
+  5-9 ms down to about 2.5 ms.
+- EFB copies dominated their GPU time (15 copies, 9.35 ms of a 17 ms
+  frame) and skipping the final copy (present from the EFB when
+  nothing draws after it) was the single biggest gain at 4x. Expect
+  CTTR's GX copy patterns to behave the same; profile copies before
+  tuning anything else.
+- Measurement traps: if a figure does not change when the workload
+  changes, it is timing waits, not work (their GPU total sat near
+  15 ms at 137 draws and at 825). Count game frames, not screen
+  updates. Emulator and PC harness prove correctness, never speed.
+- Regenerate everything after changing native/HLE bind lists, and
+  verify the regen landed (timestamps plus grep). The PC campaign
+  learned the same rule with emit-build-shards.
+- The MMIO census: instrument hardware accesses once, then drop the
+  address check everywhere the census found no hardware access. A
+  named optimisation candidate for translated code on the A57.
+- Platform traps from the AC guide: a game that replaces global
+  operator new will capture a linked-in driver's allocations on
+  Switch (rename the game's symbols with objcopy); pointers handed
+  to audio/DMA/GPU may be written through later, so copy on hand-off;
+  SDL2's Switch pad mapping is positional (A/B and X/Y swapped);
+  ApmCpuBoostMode_FastLoad drops the GPU to 76.8 MHz, so end boost
+  at the first presented frame; clocks stay opt-in and dynamic
+  resolution is the performance answer.
+- End state in both projects is CPU-bound with a flat profile, which
+  matches the PC campaign's findings and the stock-clock calibration
+  in the mkdd reference above.
